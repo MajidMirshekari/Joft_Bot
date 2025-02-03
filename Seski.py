@@ -70,7 +70,7 @@ async def button_click(update: Update, context: CallbackContext):
 
 def main():
     # توکن ربات تلگرام
-    application = Application.builder().token("Y7862915660:AAEloHMe6r1uqpuLZjslaTqcbrXmElaNnyo").build()
+    application = Application.builder().token("7862915660:AAEloHMe6r1uqpuLZjslaTqcbrXmElaNnyo").build()
 
     # دستور /start
     application.add_handler(CommandHandler("start", start))
