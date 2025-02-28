@@ -1,99 +1,70 @@
-// file seller telegram bot
-
-/*
-
-go to D1->Console and run these 3 sql to create tables
-
-CREATE TABLE files ( id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT NOT NULL, from_chat_id TEXT NOT NULL, caption TEXT NOT NULL, price INTEGER NOT NULL );
-
-CREATE TABLE orders ( id INTEGER PRIMARY KEY AUTOINCREMENT, userid TEXT NOT NULL, fileid INTEGER NOT NULL, status INTEGER NOT NULL DEFAULT 0, random_key TEXT NOT NULL, payment_data TEXT NOT NULL DEFAULT '{}' , payMsg TEXT);
-
-CREATE TABLE [payment_history] ("id" integer PRIMARY KEY,"order_id" integer,"payment_data" text,"payment_date" text);
-
-*/
-
-const BOT_TOKEN = '7584002135:AAH7b-Wg5b5HrUgA_2RntVnypTPLBVf75qs'; // token robot az bot father
-const ZARINPAL_MERCHANT_ID = '1344b5d4-0048-11e8-94db-005056a205be'; // az zarinpal begirid
-const ADMINS = ["MajidMirshekari76", "Moriparvaz"]; // ID admin ha bedone @
-const BOT_ID = "Mori_Seller_Bot"; // ID robot bedone @
-const TIME_ZONE = "Asia/Tehran"; // time zone baraye payment hisotry
-const ZARINPAL_TEST_MODE = true; // test it with sandbox
+const BOT_TOKEN = '7584002135:AAH7b-Wg5b5HrUgA_2RntVnypTPLBVf75qs'; // توکن ربات
+const ZARINPAL_MERCHANT_ID = '1344b5d4-0048-11e8-94db-005056a205be'; // مرچنت آیدی زرین‌پال
+const ADMINS = ["MajidMirshekari76", "Moriparvaz"]; // آیدی ادمین‌ها
+const BOT_ID = "Mori_Seller_Bot"; // آیدی ربات
+const TIME_ZONE = "Asia/Tehran"; // منطقه زمانی
+const ZARINPAL_TEST_MODE = true; // حالت تست زرین‌پال
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    const botValues = env.bot_values_link; // create a KV and bind to your worker -> bot_values_link
-    const botDB = env.dblink; // create a D1 database and bind it to your worker -> dblink
+    const botValues = env.bot_values_link; // KV برای ذخیره مقادیر
+    const botDB = env.dblink; // دیتابیس D1
 
+    // تابع برای ارسال درخواست به تلگرام
     async function postReq(url, fields) {
       const tgFormData = new FormData();
-
       fields.forEach(obj => {
         for (let key in obj) {
           tgFormData.append(key, obj[key]);
         }
       });
-
       const telegramResponse = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${url}`, {
         method: 'POST',
         body: tgFormData,
       });
-
-      return await telegramResponse;
+      return await telegramResponse.json();
     }
 
-
+    // تابع برای تبدیل اعداد فارسی به انگلیسی
     function engNumber(input) {
       let inputString = String(input);
-
       let persianToEnglish = inputString.replace(/[\u06F0-\u06F9]/g, (digit) =>
         String.fromCharCode(digit.charCodeAt(0) - 1728)
-      );
-
       let arabicToEnglish = persianToEnglish.replace(/[\u0660-\u0669]/g, (digit) =>
         String.fromCharCode(digit.charCodeAt(0) - 1584)
-      );
-
       let numericString = arabicToEnglish.replace(/\D/g, '');
-
       return parseInt(numericString, 10);
     }
 
-
+    // تابع برای تبدیل اعداد به فرمت فارسی
     function toFarsiNumberFormat(input) {
-
       let inputString = String(input);
-
       let formattedNumber = inputString.replace(/\B(?=(\d{3})+(?!\d))/g, '،');
-
       let farsiNumber = formattedNumber.replace(/\d/g, (digit) =>
         String.fromCharCode(digit.charCodeAt(0) + 1728)
       );
-
       return farsiNumber;
     }
 
-
-    // Check if the path is /init
+    // تنظیم وب‌هوک
     if (url.pathname === "/init") {
       try {
-        // Call the Telegram API to set the webhook
-
         const array = new Uint8Array(32);
         crypto.getRandomValues(array);
         const webhookkey = Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
-        await botValues.put("webhookkey", webhookkey)
+        await botValues.put("webhookkey", webhookkey);
 
         const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            url: `${url.protocol}//${url.hostname}/hook/${webhookkey}` // Use the current Worker URL
+            url: `${url.protocol}//${url.hostname}/hook/${webhookkey}`,
+            allowed_updates: ["message", "chat_member"] // فعال‌سازی ایونت chat_member
           })
         });
 
-        // Check if the response from Telegram is successful
         const result = await response.json();
         if (result.ok) {
           return new Response("Webhook successfully set!", { status: 200 });
@@ -105,25 +76,16 @@ export default {
       }
     }
 
-
-
-
-
-
+    // پرداخت
     if (url.pathname.startsWith("/order")) {
-
-      const url = new URL(request.url);
-
       const orderid = url.searchParams.get('id');
       const rkey = url.searchParams.get('key');
 
       const requestOrder = await botDB.prepare(`SELECT * FROM orders WHERE id = ?`).bind(orderid).first();
 
       if (rkey == requestOrder.random_key) {
-
         const orderedfile = await botDB.prepare(`SELECT * FROM files WHERE id = ?`).bind(requestOrder.fileid).first();
 
-        /*ZarinPal*/
         const headers = {
           "accept": "application/json",
           "content-type": "application/json",
@@ -135,7 +97,6 @@ export default {
           description: "order " + orderedfile.title,
           callback_url: `${url.protocol}//${url.hostname}/verify/?orderid=${orderid}&key=${requestOrder.random_key}`
         });
-
 
         const zarinpal_request_url = ZARINPAL_TEST_MODE
           ? "https://sandbox.zarinpal.com/pg/v4/payment/request.json"
@@ -149,7 +110,6 @@ export default {
 
         const zarinpal_req_pay_result = await zarinpal_req_pay_response.json();
 
-
         await botDB.prepare(`UPDATE orders SET payment_data = ? where id = ?`).bind(
           JSON.stringify({
             bank: "zarinpal",
@@ -158,8 +118,6 @@ export default {
           }),
           requestOrder.id,
         ).run();
-
-
 
         const zarinpal_payURL = ZARINPAL_TEST_MODE
           ? `https://sandbox.zarinpal.com/pg/StartPay/${zarinpal_req_pay_result.data.authority}`
@@ -257,15 +215,12 @@ export default {
         <body>
         <script>
         function cw() {
-
           try {
                window.TelegramWebviewProxy.postEvent('web_app_close', null);
            } catch (error) {
                console.error('Error posting event to Telegram Webview:', error);
            }
-             
-           }
-
+        }
         </script>
             <div class="container">
                 <button class="close-button" onclick="cw()">X</button>
@@ -303,7 +258,6 @@ export default {
         </html>
         `;
 
-
         return new Response(redirectingPage, {
           status: 200,
           headers: {
@@ -313,16 +267,11 @@ export default {
             "Expires": "0",
           },
         });
-
-        /*end of ZarinPal*/
-
       }
-
     }
 
-
+    // تایید پرداخت
     if (url.pathname.startsWith("/verify")) {
-
       const orderid = url.searchParams.get('orderid');
       const rkey = url.searchParams.get('key');
       const Authority = url.searchParams.get('Authority');
@@ -332,11 +281,9 @@ export default {
       var sendit = 0;
 
       if (rkey == verifyingOrder.random_key) {
-
-        const payment_data = JSON.parse(verifyingOrder.payment_data)
+        const payment_data = JSON.parse(verifyingOrder.payment_data);
 
         if (payment_data.bank == 'zarinpal') {
-
           const headers = {
             "accept": "application/json",
             "content-type": "application/json",
@@ -358,7 +305,6 @@ export default {
             body,
           });
 
-
           const zarinpalVerifyResponseJson = await zarinpalVerifyResponse.json();
 
           const payDate = new Intl.DateTimeFormat('en-US', {
@@ -373,8 +319,6 @@ export default {
             String(JSON.stringify(zarinpalVerifyResponseJson)),
             String(payDate)
           ).run();
-
-
 
           if (zarinpalVerifyResponseJson.data.code == 100) {
             sendit = 1;
@@ -405,10 +349,7 @@ export default {
           } else if (zarinpalVerifyResponseJson.data.code == 101) {
             sendit = 2;
           }
-
-
         }
-
 
         const htmlPage = `<!DOCTYPE html>
           <html lang="en">
@@ -471,13 +412,11 @@ export default {
           <div>
           <script>
           function cw() {
-
          try {
               window.TelegramWebviewProxy.postEvent('web_app_close', null);
           } catch (error) {
               console.error('Error posting event to Telegram Webview:', error);
           }
-            
           }
           </script>
 
@@ -505,20 +444,14 @@ export default {
           </body>
           </html>`;
 
-
         if (sendit === 1) {
-
-
           const filexx = await botDB.prepare(`SELECT * FROM files WHERE id = ?`).bind(verifyingOrder.fileid).first();
 
           await postReq(`copyMessage`, [
             { "chat_id": verifyingOrder.userid },
             { "from_chat_id": filexx.from_chat_id },
             { "message_id": filexx.message_id }
-          ])
-
-
-
+          ]);
 
           return new Response(htmlPage.replace("[BODY]", `<div>
           <h1>✅پرداخت شد</h1>
@@ -529,9 +462,6 @@ export default {
               'Content-Type': 'text/html; charset=UTF-8',
             }
           });
-
-
-
 
         } else if (sendit === 2) {
           return new Response(htmlPage.replace("[BODY]", `
@@ -551,18 +481,12 @@ export default {
               'Content-Type': 'text/html; charset=UTF-8',
             }
           });
-
         }
-
-
       }
-
     }
 
-
-
+    // هندلر وب‌هوک
     if (url.pathname.startsWith("/hook")) {
-
       const reqHook = url.pathname.split('/hook/')[1];
 
       if (reqHook == await botValues.get("webhookkey")) {
